@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Transcript</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: black;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            background-color: rgb(255, 255, 255);
+            padding: 2rem;
+            border-radius: 1.5rem;
+            width: 100%;
+            max-width: 48rem;
+            box-sizing: border-box;
+        }
+        
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background-color: white;
+            margin: 0;
+        }
+
+        .margin-bottom {
+            margin-bottom: 1rem;
+        }
+        
+        label {
+            display: block;
+            font-size: 1rem;
+            font-weight: 1000;
+            color: #374151;
+            margin-bottom: 0.25rem;
+        }
+        
+        input[type="password"],
+        textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.375rem;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        
+        textarea {
+            height: 16rem;
+            background-color: #f9fafb;
+        }
+
+        button {
+            padding: 0.5rem 1rem;
+            color: white;
+            font-weight: 600;
+            border-radius: 0.375rem;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        #recordButton {
+             background-color: #4f46e5;
+        }
+
+        #copyButton {
+            background-color: #e5e7eb;
+            color: #374151;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .status-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        #status-indicator {
+            width: 0.75rem;
+            height: 0.75rem;
+            border-radius: 9999px;
+            background-color: #9ca3af;
+            transition: background-color 0.3s;
+        }
+
+        #status-text {
+             color: #6b7280;
+        }
+        
+        .pulse {
+            animation: pulse-animation 2s infinite;
+        }
+        @keyframes pulse-animation {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        #copy-message {
+            text-align: center;
+            color: #16a34a;
+            font-weight: 500;
+            margin-top: 0.5rem;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        
+        <div class="header">
+            <h1>Live Transcript</h1>
+        </div>
+
+        <div class="margin-bottom">
+            <label for="apiKey">Deepgram API Key</label>
+            <input type="password" id="apiKey" placeholder="Enter your Deepgram API Key">
+        </div>
+
+  
+        <div class="status-container margin-bottom">
+            <button id="recordButton">Start Listening</button>
+            <div id="status-indicator"></div>
+            <span id="status-text">Idle</span>
+        </div>
+        
+    
+        <div>
+            <div class="header">
+                <h2>Transcript</h2>
+                <button id="copyButton">Copy</button>
+            </div>
+            <textarea id="transcript" placeholder="Your transcribed text will appear here..."></textarea>
+        </div>
+        <div id="copy-message">Copied to clipboard!</div>
+    </div>
+
+    <script>
+       
+        const recordButton = document.getElementById('recordButton');
+        const apiKeyInput = document.getElementById('apiKey');
+        const statusText = document.getElementById('status-text');
+        const statusIndicator = document.getElementById('status-indicator');
+        const transcriptTextarea = document.getElementById('transcript');
+        const copyButton = document.getElementById('copyButton');
+        const copyMessage = document.getElementById('copy-message');
+
+        let socket;
+        let mediaRecorder;
+        let isRecording = false;
+        let finalTranscript = ''; // Stores the final, confirmed transcript
+
+
+        const updateStatus = (text, color, isPulsing = false) => {
+            statusText.textContent = text;
+            statusIndicator.style.backgroundColor = color;
+            if (isPulsing) {
+                statusIndicator.classList.add('pulse');
+            } else {
+                statusIndicator.classList.remove('pulse');
+            }
+        };
+
+        const showCopyMessage = () => {
+            copyMessage.style.opacity = '1';
+            setTimeout(() => {
+                copyMessage.style.opacity = '0';
+            }, 2000);
+        };
+        
+        // Starts recording 
+        const startRecording = async () => {
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                alert('Please enter your Deepgram API Key.');
+                return;
+            }
+
+            try {
+                // Get microphone access
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                //  Create WebSocket connection to Deepgram
+                const deepgramUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&interim_results=true&smart_format=true';
+                socket = new WebSocket(deepgramUrl, ['token', apiKey]);
+
+                //  Set up WebSocket event listeners
+                socket.onopen = () => {
+                    console.log('Connection Opened');
+                    updateStatus('Listening...', '#ef4444', true); // Red color for listening
+
+                    //  Create MediaRecorder to capture audio
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+
+                    //  Send audio data to Deepgram when it's available
+                    mediaRecorder.ondataavailable = event => {
+                        if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
+                            socket.send(event.data);
+                        }
+                    };
+                    
+                    //  Start recording and update UI
+                    mediaRecorder.start(250);
+                    isRecording = true;
+                    recordButton.textContent = 'Stop Listening';
+                    recordButton.style.backgroundColor = '#dc2626'; // Red button
+                    finalTranscript = transcriptTextarea.value; 
+                };
+
+                //  Handle incoming messages from Deepgram
+                socket.onmessage = event => {
+                    const data = JSON.parse(event.data);
+                    const transcript = data.channel.alternatives[0].transcript;
+                    const isFinal = data.is_final;
+                    
+                    if (transcript) {
+                        if (isFinal) {
+                            finalTranscript += transcript + ' ';
+                            transcriptTextarea.value = finalTranscript;
+                        } else {
+                            transcriptTextarea.value = finalTranscript + transcript;
+                        }
+                    }
+                };
+
+                socket.onclose = () => {
+                    console.log('Connection Closed');
+                    stopRecordingCleanup();
+                };
+
+                socket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    stopRecordingCleanup();
+                };
+
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                alert('Could not access microphone. Please ensure you have given permission.');
+                updateStatus('Mic Error', '#ef4444'); // Red for error
+            }
+        };
+
+        const stopRecording = () => {
+            if (socket) {
+                socket.send(JSON.stringify({ type: 'CloseStream' }));
+            }
+        };
+        
+        // Cleans up resources and resets the UI
+        const stopRecordingCleanup = () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            }
+            
+            socket = null;
+            mediaRecorder = null;
+            isRecording = false;
+            
+            // Reset UI elements
+            recordButton.textContent = 'Start Listening';
+            recordButton.style.backgroundColor = '#4f46e5'; // Back to blue
+            updateStatus('Idle', '#9ca3af'); // Gray for idle
+        };
+
+      
+        
+        // Start/Stop button
+        recordButton.addEventListener('click', () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
+
+        // Copy button
+        copyButton.addEventListener('click', () => {
+            const textToCopy = transcriptTextarea.value.trim();
+            if (textToCopy) {
+                 navigator.clipboard.writeText(textToCopy).then(() => {
+                    showCopyMessage();
+                 }).catch(err => {
+                    console.error('Failed to copy text: ', err);
+                 });
+            }
+        });
+
+    </script>
+</body>
+</html>
